@@ -88,4 +88,44 @@ export class EmbeddingService {
   isAvailable(): boolean {
     return this.genAI !== null;
   }
+
+  /**
+   * Genera un resumen breve y compartible en español para un reporte.
+   * Retorna null si Gemini no está disponible o falla.
+   */
+  async generateSocialSummary(input: {
+    species: string;
+    type: string;
+    color?: string;
+    breed?: string;
+    size?: string;
+    description?: string;
+  }): Promise<string | null> {
+    if (!this.genAI) return null;
+
+    const prompt = [
+      'Redacta un resumen en español para redes sociales sobre una mascota perdida/encontrada.',
+      'Requisitos:',
+      '- 2 a 3 oraciones cortas.',
+      '- Tono humano, claro y empatico (no robotico).',
+      '- Maximo 260 caracteres.',
+      '- Sin hashtags ni emojis.',
+      '- Sin inventar datos que no esten en el contexto.',
+      '- Devuelve solo el texto final.',
+      '',
+      `Contexto: especie=${input.species}, tipo=${input.type}, color=${input.color ?? 'N/D'}, raza=${input.breed ?? 'N/D'}, tamano=${input.size ?? 'N/D'}`,
+      `Descripcion: ${input.description ?? 'N/D'}`,
+    ].join('\n');
+
+    try {
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const result = await model.generateContent(prompt);
+      const text = result.response.text()?.trim();
+      if (!text) return null;
+      return text.replace(/^"|"$/g, '').trim();
+    } catch (error) {
+      this.logger.warn(`Error generando resumen IA: ${error.message}`);
+      return null;
+    }
+  }
 }

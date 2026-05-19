@@ -346,6 +346,122 @@ export class ReportsService {
     return report;
   }
 
+  async findMatchesForReport(reportId: string, limit = 6): Promise<ReportWithScore[]> {
+    const source = await this.findById(reportId);
+
+    const oppositeType = source.type === PostType.LOST ? PostType.FOUND : PostType.LOST;
+    const candidates = await this.reportRepository.findAll({
+      status: PostStatus.ACTIVE,
+      species: source.species,
+      type: oppositeType,
+    });
+
+    const filtered = candidates.filter((r) => r.id !== source.id);
+    if (!filtered.length) return [];
+
+    const hasGeoSource = Number.isFinite(source.lat) && Number.isFinite(source.lon);
+
+    const sourceEmbedding = source.embedding?.length
+      ? source.embedding
+      : await this.embeddingService.generateEmbedding(
+          this.embeddingService.buildReportText({
+            species: source.species,
+            color: source.color,
+            breed: source.breed,
+            size: source.size,
+            description: source.description,
+          }),
+        );
+
+    const scored = filtered
+      .map((candidate) => {
+        const candidateEmbedding = candidate.embedding?.length ? candidate.embedding : [];
+
+        let semanticScore = 0;
+        if (sourceEmbedding.length && candidateEmbedding.length) {
+          semanticScore = this.embeddingService.cosineSimilarity(
+            sourceEmbedding,
+            candidateEmbedding,
+          );
+        } else {
+          semanticScore = this.roughTextSimilarity(
+            this.embeddingService.buildReportText({
+              species: source.species,
+              color: source.color,
+              breed: source.breed,
+              size: source.size,
+              description: source.description,
+            }),
+            this.embeddingService.buildReportText({
+              species: candidate.species,
+              color: candidate.color,
+              breed: candidate.breed,
+              size: candidate.size,
+              description: candidate.description,
+            }),
+          );
+        }
+
+        let distanceKm: number | undefined;
+        let geoScore = 0;
+        const hasGeoCandidate = Number.isFinite(candidate.lat) && Number.isFinite(candidate.lon);
+        if (hasGeoSource && hasGeoCandidate) {
+          distanceKm = this.embeddingService.calculateDistanceKm(
+            source.lat,
+            source.lon,
+            candidate.lat,
+            candidate.lon,
+          );
+          geoScore = Math.max(0, 1 - distanceKm / 30);
+        }
+
+        const score =
+          hasGeoSource && hasGeoCandidate ? 0.75 * semanticScore + 0.25 * geoScore : semanticScore;
+
+        return Object.assign(candidate, {
+          similarityScore: Math.round(score * 100) / 100,
+          distanceKm,
+        }) as ReportWithScore;
+      })
+      .filter((item) => item.similarityScore >= 0.2)
+      .sort((a, b) => b.similarityScore - a.similarityScore)
+      .slice(0, Math.max(1, Math.min(limit, 20)));
+
+    return scored;
+  }
+
+  async generateReportSummary(reportId: string): Promise<string> {
+    const report = await this.findById(reportId);
+
+    const aiSummary = await this.embeddingService.generateSocialSummary({
+      species: this.speciesLabel(report.species),
+      type: report.type === PostType.LOST ? 'perdido' : 'encontrado',
+      color: report.color,
+      breed: report.breed,
+      size: this.sizeLabel(report.size),
+      description: report.description,
+    });
+
+    if (aiSummary) return aiSummary;
+
+    const typeLabel = report.type === PostType.LOST ? 'perdido' : 'encontrado';
+    const species = this.speciesLabel(report.species);
+    const details = [report.color, report.breed, this.sizeLabel(report.size)]
+      .filter(Boolean)
+      .join(', ');
+    const description =
+      report.description?.trim() || 'Comparte este reporte para aumentar la visibilidad.';
+
+    return [
+      `Se reporta ${species} ${typeLabel}.${details ? ` Caracteristicas: ${details}.` : ''}`,
+      description,
+      'Ayudanos compartiendo esta informacion para lograr un reencuentro pronto.',
+    ]
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   async findMyReports(userId: string): Promise<Report[]> {
     return this.reportRepository.findByUserId(userId);
   }
@@ -532,6 +648,47 @@ export class ReportsService {
       pagination: { page, limit, total: 0, totalPages: 1, hasNextPage: false, hasPrevPage: false },
       isSemanticSearch,
     };
+  }
+
+  private roughTextSimilarity(a: string, b: string): number {
+    const tokenize = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((token) => token.length > 2);
+
+    const aSet = new Set(tokenize(a));
+    const bSet = new Set(tokenize(b));
+    if (!aSet.size || !bSet.size) return 0;
+
+    let intersection = 0;
+    aSet.forEach((token) => {
+      if (bSet.has(token)) intersection += 1;
+    });
+
+    const union = new Set([...Array.from(aSet), ...Array.from(bSet)]).size;
+    return union ? intersection / union : 0;
+  }
+
+  private speciesLabel(species: string): string {
+    const map: Record<string, string> = {
+      dog: 'perro',
+      cat: 'gato',
+      bird: 'ave',
+      rabbit: 'conejo',
+      other: 'mascota',
+    };
+    return map[species] ?? 'mascota';
+  }
+
+  private sizeLabel(size: string): string {
+    const map: Record<string, string> = {
+      small: 'pequeno',
+      medium: 'mediano',
+      large: 'grande',
+    };
+    return map[size] ?? '';
   }
 
   private validateImageUrl(imageUrl: string): void {
