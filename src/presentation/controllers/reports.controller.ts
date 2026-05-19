@@ -362,6 +362,41 @@ export class ReportsController {
     return this.reportsService.getPublicStats();
   }
 
+  // ─── Coincidencias automáticas ────────────────────────────────────────────
+
+  @Get(':id/matches')
+  @ApiOperation({
+    summary: 'Coincidencias por reporte',
+    description:
+      'Obtiene coincidencias potenciales para un reporte comparando especie, tipo opuesto y similitud.',
+  })
+  @ApiParam({ name: 'id', type: String })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async findMatches(
+    @Param('id') id: string,
+    @Query('limit') limit = '6',
+  ): Promise<{ data: ReportWithScore[] }> {
+    const parsedLimit = Number(limit);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 20) {
+      throw new BadRequestException('El parámetro limit debe ser un entero entre 1 y 20');
+    }
+    const data = await this.reportsService.findMatchesForReport(id, parsedLimit);
+    return { data };
+  }
+
+  // ─── Resumen IA ───────────────────────────────────────────────────────────
+
+  @Get(':id/summary')
+  @ApiOperation({
+    summary: 'Resumen IA de reporte',
+    description: 'Genera un resumen breve en español para compartir un reporte de mascota.',
+  })
+  @ApiParam({ name: 'id', type: String })
+  async getSummary(@Param('id') id: string): Promise<{ summary: string }> {
+    const summary = await this.reportsService.generateReportSummary(id);
+    return { summary };
+  }
+
   // ─── Detalle ──────────────────────────────────────────────────────────────
 
   @Get(':id')
