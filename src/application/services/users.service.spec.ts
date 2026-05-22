@@ -208,4 +208,189 @@ describe('UsersService', () => {
       await expect(service.remove('ghost')).rejects.toThrow(NotFoundException);
     });
   });
+
+  describe('findByEmail', () => {
+    it('should return user when found', async () => {
+      const user = makeUser();
+      repo.findByEmail.mockResolvedValue(user);
+      const result = await service.findByEmail('test@example.com');
+      expect(result).toBe(user);
+    });
+
+    it('should return null when not found', async () => {
+      repo.findByEmail.mockResolvedValue(null);
+      const result = await service.findByEmail('ghost@example.com');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('changePassword', () => {
+    it('should change password when current is correct and new is different', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      repo.update.mockResolvedValue(user);
+      passwordHash.compare.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      await service.changePassword('user-1', 'OldPass1!', 'NewPass1!');
+
+      expect(passwordHash.hash).toHaveBeenCalledWith('NewPass1!');
+      expect(repo.update).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.changePassword('ghost', 'old', 'new')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw BadRequestException when current password is wrong', async () => {
+      repo.findById.mockResolvedValue(makeUser());
+      passwordHash.compare.mockResolvedValueOnce(false);
+      await expect(service.changePassword('user-1', 'wrong', 'NewPass1!')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should throw BadRequestException when new password equals current', async () => {
+      repo.findById.mockResolvedValue(makeUser());
+      passwordHash.compare.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      await expect(service.changePassword('user-1', 'Same1!', 'Same1!')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('getUserStats', () => {
+    it('should return stats with report counts', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      reportRepo.findByUserId.mockResolvedValue([
+        { status: 'active' } as any,
+        { status: 'resolved' } as any,
+        { status: 'resolved' } as any,
+      ]);
+
+      const result = await service.getUserStats('user-1');
+
+      expect(result.reportsPublished).toBe(3);
+      expect(result.successfulReunions).toBe(2);
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.getUserStats('ghost')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('uploadAvatar', () => {
+    it('should upload avatar and return signed url', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      repo.update.mockResolvedValue(user);
+
+      const result = await service.uploadAvatar('user-1', { buffer: Buffer.from('img') });
+
+      expect(azureBlobStorage.uploadImage).toHaveBeenCalledWith(
+        expect.any(Object),
+        'avatars',
+        'user-1',
+      );
+      expect(typeof result).toBe('string');
+    });
+
+    it('should throw BadRequestException when no file', async () => {
+      await expect(service.uploadAvatar('user-1', null)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.uploadAvatar('ghost', { buffer: Buffer.from('x') })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('deleteAvatar', () => {
+    it('should delete avatar and clear profileImage', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      repo.update.mockResolvedValue(user);
+
+      await service.deleteAvatar('user-1');
+
+      expect(azureBlobStorage.deleteBlobByUrl).toHaveBeenCalled();
+      expect(repo.update).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.deleteAvatar('ghost')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('deleteAccount', () => {
+    it('should deactivate user and their reports', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      repo.update.mockResolvedValue(user);
+      passwordHash.compare.mockResolvedValue(true);
+      reportRepo.findByUserId.mockResolvedValue([
+        { status: 'active', id: 'r1', deactivate: jest.fn() } as any,
+      ]);
+      reportRepo.update.mockResolvedValue(undefined);
+
+      await service.deleteAccount('user-1', 'Pass1!');
+
+      expect(user.isActive).toBe(false);
+      expect(repo.update).toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException when password is wrong', async () => {
+      repo.findById.mockResolvedValue(makeUser());
+      passwordHash.compare.mockResolvedValue(false);
+      await expect(service.deleteAccount('user-1', 'wrong')).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.deleteAccount('ghost', 'pass')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updatePasswordHash', () => {
+    it('should update password hash directly', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      repo.update.mockResolvedValue(user);
+
+      await service.updatePasswordHash('user-1', 'new_hashed_pass');
+
+      expect(user.password).toBe('new_hashed_pass');
+      expect(repo.update).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.updatePasswordHash('ghost', 'hash')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('markEmailAsVerified', () => {
+    it('should verify email of user', async () => {
+      const user = makeUser();
+      repo.findById.mockResolvedValue(user);
+      repo.update.mockResolvedValue(user);
+
+      await service.markEmailAsVerified('user-1');
+
+      expect(user.emailVerified).toBe(true);
+      expect(repo.update).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.markEmailAsVerified('ghost')).rejects.toThrow(NotFoundException);
+    });
+  });
 });
