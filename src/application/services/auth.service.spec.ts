@@ -36,6 +36,8 @@ describe('AuthService', () => {
     usersService = {
       create: jest.fn(),
       findByEmail: jest.fn(),
+      updatePasswordHash: jest.fn().mockResolvedValue(undefined),
+      markEmailAsVerified: jest.fn().mockResolvedValue(undefined),
     };
     passwordHashService = {
       hash: jest.fn().mockResolvedValue('hashed_pass'),
@@ -51,6 +53,12 @@ describe('AuthService', () => {
         refreshToken: 'mock.refresh.token',
         tokenType: 'Bearer',
       }),
+      rotateTokenPair: jest.fn().mockResolvedValue({
+        accessToken: 'new.access.token',
+        refreshToken: 'new.refresh.token',
+      }),
+      revokeByToken: jest.fn().mockResolvedValue(undefined),
+      revokeAllByUser: jest.fn().mockResolvedValue(undefined),
     };
     emailService = {
       sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
@@ -147,6 +155,149 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'test@example.com', password: 'Pass123!' }),
       ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('validateToken', () => {
+    it('should return payload for valid token', async () => {
+      const payload = { sub: 'user-1', email: 'test@example.com' };
+      (jwtService.verify as jest.Mock).mockReturnValue(payload);
+
+      const result = await service.validateToken('valid.token');
+      expect(result).toEqual(payload);
+    });
+
+    it('should throw UnauthorizedException for invalid token', async () => {
+      (jwtService.verify as jest.Mock).mockImplementation(() => {
+        throw new Error('expired');
+      });
+      await expect(service.validateToken('bad.token')).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('refresh', () => {
+    it('should rotate tokens for valid refresh token', async () => {
+      const result = await service.refresh('valid.refresh.token');
+      expect(refreshTokenSessionService.rotateTokenPair).toHaveBeenCalledWith(
+        'valid.refresh.token',
+      );
+      expect(result.accessToken).toBe('new.access.token');
+      expect(result.refreshToken).toBe('new.refresh.token');
+    });
+
+    it('should throw BadRequestException when token is empty', async () => {
+      const { BadRequestException } = await import('@nestjs/common');
+      await expect(service.refresh('')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('logout', () => {
+    it('should revoke the refresh token and return message', async () => {
+      const result = await service.logout({ refreshToken: 'r.token' } as any);
+      expect(refreshTokenSessionService.revokeByToken).toHaveBeenCalledWith('r.token');
+      expect(result.message).toContain('cerrada');
+    });
+
+    it('should also work with token field', async () => {
+      await service.logout({ token: 'r.token' } as any);
+      expect(refreshTokenSessionService.revokeByToken).toHaveBeenCalledWith('r.token');
+    });
+  });
+
+  describe('logoutAll', () => {
+    it('should revoke all sessions for user and return message', async () => {
+      const result = await service.logoutAll('user-1');
+      expect(refreshTokenSessionService.revokeAllByUser).toHaveBeenCalledWith('user-1');
+      expect(result.message).toBeDefined();
+    });
+  });
+
+  describe('forgotPassword', () => {
+    it('should return generic message when user exists and send email', async () => {
+      const user = makeUser();
+      (usersService.findByEmail as jest.Mock).mockResolvedValue(user);
+
+      const result = await service.forgotPassword({ email: 'test@example.com' });
+
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: 'password_reset' }),
+        expect.any(Object),
+      );
+      expect(result.message).toBeDefined();
+    });
+
+    it('should return generic message when user does not exist (no enumeration)', async () => {
+      (usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+
+      const result = await service.forgotPassword({ email: 'ghost@example.com' });
+
+      expect(jwtService.sign).not.toHaveBeenCalled();
+      expect(result.message).toBeDefined();
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('should reset password for valid token', async () => {
+      const user = makeUser();
+      (jwtService.verify as jest.Mock).mockReturnValue({
+        sub: 'user-1',
+        email: 'test@example.com',
+        purpose: 'password_reset',
+      });
+      (usersService.findByEmail as jest.Mock).mockResolvedValue(user);
+
+      const result = await service.resetPassword({
+        token: 'valid.token',
+        newPassword: 'NewPass1!',
+      } as any);
+
+      expect(passwordHashService.hash).toHaveBeenCalledWith('NewPass1!');
+      expect(usersService.updatePasswordHash).toHaveBeenCalled();
+      expect(result.message).toBeDefined();
+    });
+
+    it('should throw BadRequestException for invalid token', async () => {
+      const { BadRequestException } = await import('@nestjs/common');
+      (jwtService.verify as jest.Mock).mockImplementation(() => {
+        throw new Error('invalid');
+      });
+      await expect(
+        service.resetPassword({ token: 'bad', newPassword: 'x' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException when token purpose is wrong', async () => {
+      const { BadRequestException } = await import('@nestjs/common');
+      (jwtService.verify as jest.Mock).mockReturnValue({ purpose: 'email_verification' });
+      await expect(
+        service.resetPassword({ token: 'wrong', newPassword: 'x' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('verifyEmail', () => {
+    it('should verify email for valid token', async () => {
+      const user = makeUser();
+      (jwtService.verify as jest.Mock).mockReturnValue({
+        email: 'test@example.com',
+        purpose: 'email_verification',
+      });
+      (usersService.findByEmail as jest.Mock).mockResolvedValue(user);
+
+      const result = await service.verifyEmail({ token: 'valid.token' } as any);
+
+      expect(usersService.markEmailAsVerified).toHaveBeenCalledWith(user.id);
+      expect(result.message).toBeDefined();
+    });
+
+    it('should throw BadRequestException for invalid token', async () => {
+      const { BadRequestException } = await import('@nestjs/common');
+      (jwtService.verify as jest.Mock).mockImplementation(() => {
+        throw new Error();
+      });
+      await expect(service.verifyEmail({ token: 'bad' } as any)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

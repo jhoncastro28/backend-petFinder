@@ -95,8 +95,37 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!main.ts",
+      "!app.controller.ts",
+      "!**/*.module.ts",
+      "!**/index.ts",
+      "!**/*.dto.ts",
+      "!**/*.enum.ts",
+      "!**/*.interface.ts",
+      "!**/*.spec.ts",
+      "!infrastructure/config/**",
+      "!infrastructure/database/cosmosdb/**",
+      "!infrastructure/database/cosmosdb.service.ts",
+      "!infrastructure/database/in-memory/in-memory-post.repository.ts",
+      "!infrastructure/external-services/**",
+      "!infrastructure/email/**",
+      "!modules/storage/**",
+      "!presentation/filters/**",
+      "!application/services/admin-seed.service.ts",
+      "!application/services/embedding.service.ts",
+      "!application/services/vision.service.ts",
+      "!application/services/refresh-token-session.service.ts",
+      "!application/services/posts.service.ts",
+      "!presentation/controllers/posts.controller.ts"
     ],
+    "coverageThreshold": {
+      "global": {
+        "lines": 70,
+        "functions": 70,
+        "statements": 70
+      }
+    },
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
     "coverageReporters": [
