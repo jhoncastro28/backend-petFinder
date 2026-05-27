@@ -56,7 +56,8 @@ export class EmbeddingService {
   }
 
   /**
-   * Construye el texto de embedding concatenando los campos descriptivos del reporte.
+   * Construye texto bilingüe (español + inglés) con sinónimos para maximizar la cobertura
+   * semántica. Incluye el tipo del reporte (perdido/encontrado) con sus variantes léxicas.
    */
   buildReportText(report: {
     species: string;
@@ -64,11 +65,90 @@ export class EmbeddingService {
     breed: string;
     size: string;
     description: string;
+    type?: string;
   }): string {
-    return [report.species, report.color, report.breed, report.size, report.description]
+    const speciesMap: Record<string, { es: string; en: string }> = {
+      dog: { es: 'perro', en: 'dog' },
+      cat: { es: 'gato', en: 'cat' },
+      bird: { es: 'ave pájaro', en: 'bird' },
+      rabbit: { es: 'conejo', en: 'rabbit' },
+      other: { es: 'mascota animal', en: 'pet animal' },
+    };
+    const sizeMap: Record<string, { es: string; en: string }> = {
+      small: { es: 'pequeño chico', en: 'small' },
+      medium: { es: 'mediano', en: 'medium' },
+      large: { es: 'grande', en: 'large' },
+    };
+    const typeMap: Record<string, { es: string; en: string }> = {
+      lost: { es: 'perdido extraviado desaparecido', en: 'lost missing' },
+      found: { es: 'encontrado hallado rescatado', en: 'found rescued' },
+    };
+
+    const spec = speciesMap[report.species] ?? { es: report.species, en: report.species };
+    const sz = report.size ? (sizeMap[report.size] ?? null) : null;
+    const tp = report.type ? (typeMap[report.type] ?? null) : null;
+
+    // Oración en español: especie raza, color X, tamaño Y, estado
+    const esParts = [
+      spec.es,
+      report.breed,
+      report.color ? `color ${report.color}` : '',
+      sz ? `tamaño ${sz.es}` : '',
+      tp ? tp.es : '',
+    ]
       .filter(Boolean)
-      .join(' ')
+      .join(', ');
+
+    // Oración en inglés: estado tamaño color raza especie
+    const enParts = [tp?.en ?? '', sz?.en ?? '', report.color ?? '', report.breed ?? '', spec.en]
+      .filter(Boolean)
+      .join(' ');
+
+    return [esParts, enParts, report.description]
+      .filter(Boolean)
+      .join('. ')
+      .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  /**
+   * Normaliza la query del usuario antes de generar su embedding:
+   * - Corrige palabras en español escritas sin tilde
+   * - Expande sinónimos comunes de búsqueda de mascotas (español ↔ inglés)
+   */
+  preprocessQuery(query: string): string {
+    let q = query.trim().toLowerCase();
+
+    // Corrección de tildes omitidas (errores tipográficos frecuentes en español)
+    const accentFixes: [RegExp, string][] = [
+      [/\bperdio\b/g, 'perdió'],
+      [/\bencontro\b/g, 'encontró'],
+      [/\bdesaparecio\b/g, 'desapareció'],
+      [/\bpequeno\b/g, 'pequeño'],
+      [/\bextravio\b/g, 'extravió extraviado'],
+      [/\bpajaro\b/g, 'pájaro ave'],
+    ];
+    for (const [re, rep] of accentFixes) {
+      q = q.replace(re, rep);
+    }
+
+    // Expansión de sinónimos: cada término se amplía con sus equivalentes semánticos
+    const synonyms: [RegExp, string][] = [
+      [/\bextraviado\b/g, 'extraviado perdido lost missing'],
+      [/\bdesaparecido\b/g, 'desaparecido perdido lost missing'],
+      [/\bhallado\b/g, 'hallado encontrado found'],
+      [/\brescatado\b/g, 'rescatado encontrado found rescued'],
+      [/\babandonado\b/g, 'abandonado perdido stray lost'],
+      [/\bcallejero\b/g, 'callejero perdido stray lost'],
+      [/\bcachorro\b/g, 'cachorro perro dog puppy'],
+      [/\bperrito\b/g, 'perrito perro dog'],
+      [/\bgatito\b/g, 'gatito gato cat'],
+    ];
+    for (const [re, rep] of synonyms) {
+      q = q.replace(re, rep);
+    }
+
+    return q;
   }
 
   /**
