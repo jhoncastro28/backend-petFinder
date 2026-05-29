@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { PostsModule } from './modules/posts/posts.module';
 import { LocationModule } from './modules/location/location.module';
 import { StorageModule } from './modules/storage/storage.module';
 
@@ -36,6 +37,7 @@ import { StorageModule } from './modules/storage/storage.module';
     UsersModule,
     NotificationsModule,
     ReportsModule,
+    PostsModule,
     LocationModule,
     StorageModule,
   ],

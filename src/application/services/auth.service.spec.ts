@@ -156,6 +156,26 @@ describe('AuthService', () => {
         service.login({ email: 'test@example.com', password: 'Pass123!' }),
       ).rejects.toThrow(UnauthorizedException);
     });
+
+    it('should throw UnauthorizedException with remaining minutes when account is locked', async () => {
+      const user = makeUser();
+      user.accountLockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+      userRepository.findByEmail.mockResolvedValue(user);
+
+      await expect(
+        service.login({ email: 'test@example.com', password: 'Pass123!' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw UnauthorizedException with default 30 minutes when account is locked but lockedUntil is undefined', async () => {
+      const user = makeUser();
+      jest.spyOn(user, 'isAccountLocked').mockReturnValue(true);
+      userRepository.findByEmail.mockResolvedValue(user);
+
+      await expect(
+        service.login({ email: 'test@example.com', password: 'Pass123!' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
   });
 
   describe('validateToken', () => {
@@ -271,6 +291,20 @@ describe('AuthService', () => {
       (jwtService.verify as jest.Mock).mockReturnValue({ purpose: 'email_verification' });
       await expect(
         service.resetPassword({ token: 'wrong', newPassword: 'x' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException when user is not found', async () => {
+      const { BadRequestException } = await import('@nestjs/common');
+      (jwtService.verify as jest.Mock).mockReturnValue({
+        sub: 'user-1',
+        email: 'nobody@example.com',
+        purpose: 'password_reset',
+      });
+      (usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.resetPassword({ token: 'valid.token', newPassword: 'NewPass1!' } as any),
       ).rejects.toThrow(BadRequestException);
     });
   });
