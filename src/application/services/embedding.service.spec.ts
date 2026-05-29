@@ -2,6 +2,19 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { EmbeddingService } from './embedding.service';
 
+const mockEmbedContent = jest.fn();
+const mockGenerateContent = jest.fn();
+const mockGetGenerativeModel = jest.fn().mockReturnValue({
+  embedContent: mockEmbedContent,
+  generateContent: mockGenerateContent,
+});
+
+jest.mock('@google/generative-ai', () => ({
+  GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
+    getGenerativeModel: mockGetGenerativeModel,
+  })),
+}));
+
 const mockConfigService = (apiKey: string | undefined) => ({
   get: jest.fn().mockReturnValue(apiKey),
 });
@@ -39,6 +52,7 @@ describe('EmbeddingService', () => {
     let service: EmbeddingService;
 
     beforeEach(async () => {
+      jest.clearAllMocks();
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           EmbeddingService,
@@ -52,9 +66,51 @@ describe('EmbeddingService', () => {
       expect(service.isAvailable()).toBe(true);
     });
 
+    it('generateEmbedding should return embedding values on success', async () => {
+      mockEmbedContent.mockResolvedValue({ embedding: { values: [0.1, 0.2, 0.3] } });
+      const result = await service.generateEmbedding('perro negro labrador');
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
     it('generateEmbedding should return empty array on API error', async () => {
+      mockEmbedContent.mockRejectedValue(new Error('API error'));
       const result = await service.generateEmbedding('perro');
       expect(result).toEqual([]);
+    });
+
+    it('generateSocialSummary should return summary text on success', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: { text: () => 'Se busca perro negro perdido en Tunja.' },
+      });
+      const result = await service.generateSocialSummary({
+        species: 'dog',
+        type: 'lost',
+        color: 'negro',
+        breed: 'Labrador',
+        size: 'large',
+        description: 'Collar rojo.',
+      });
+      expect(result).toBe('Se busca perro negro perdido en Tunja.');
+    });
+
+    it('generateSocialSummary should return null when response text is empty', async () => {
+      mockGenerateContent.mockResolvedValue({ response: { text: () => '' } });
+      const result = await service.generateSocialSummary({ species: 'cat', type: 'found' });
+      expect(result).toBeNull();
+    });
+
+    it('generateSocialSummary should return null on API error', async () => {
+      mockGenerateContent.mockRejectedValue(new Error('API error'));
+      const result = await service.generateSocialSummary({ species: 'dog', type: 'lost' });
+      expect(result).toBeNull();
+    });
+
+    it('generateSocialSummary should strip surrounding quotes from response', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: { text: () => '"Se busca perro."' },
+      });
+      const result = await service.generateSocialSummary({ species: 'dog', type: 'lost' });
+      expect(result).toBe('Se busca perro.');
     });
   });
 
@@ -243,6 +299,44 @@ describe('EmbeddingService', () => {
         type: 'lost',
       });
       expect(text).toContain(description);
+    });
+
+    it('should handle missing size gracefully', () => {
+      const text = service.buildReportText({
+        species: 'dog',
+        color: 'negro',
+        breed: 'Labrador',
+        size: '',
+        description: 'Activo.',
+        type: 'lost',
+      });
+      expect(text).toContain('perro');
+    });
+
+    it('should handle rabbit species', () => {
+      const text = service.buildReportText({
+        species: 'rabbit',
+        color: 'blanco',
+        breed: 'Rex',
+        size: 'small',
+        description: 'Muy manso.',
+        type: 'lost',
+      });
+      expect(text).toContain('conejo');
+      expect(text).toContain('rabbit');
+    });
+
+    it('should handle other species', () => {
+      const text = service.buildReportText({
+        species: 'other',
+        color: 'gris',
+        breed: 'Chinchilla',
+        size: 'small',
+        description: 'Pelo suave.',
+        type: 'found',
+      });
+      expect(text).toContain('mascota');
+      expect(text).toContain('pet');
     });
   });
 
