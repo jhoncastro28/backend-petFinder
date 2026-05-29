@@ -1,4 +1,10 @@
-import { Injectable, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from './users.service';
 import {
@@ -14,7 +20,12 @@ import { PasswordHashService } from './password-hash.service';
 import { RefreshTokenSessionService } from './refresh-token-session.service';
 import { EmailService } from '../../infrastructure/email/email.service';
 import { IUserRepository } from '../../domain/repositories';
-import { Inject } from '@nestjs/common';
+
+interface JwtTokenPayload {
+  sub?: string;
+  email?: string;
+  purpose?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -70,7 +81,10 @@ export class AuthService {
 
     // Verificar bloqueo de cuenta ANTES de comparar contraseña
     if (user.isAccountLocked()) {
-      const minutesLeft = Math.ceil((user.accountLockedUntil!.getTime() - Date.now()) / 60000);
+      const lockedUntil = user.accountLockedUntil;
+      const minutesLeft = lockedUntil
+        ? Math.ceil((lockedUntil.getTime() - Date.now()) / 60000)
+        : 30;
       throw new UnauthorizedException(
         `Cuenta bloqueada por demasiados intentos fallidos. Intenta de nuevo en ${minutesLeft} minuto(s).`,
       );
@@ -124,10 +138,10 @@ export class AuthService {
     });
   }
 
-  async validateToken(token: string): Promise<any> {
+  async validateToken(token: string): Promise<Record<string, unknown>> {
     try {
-      return this.jwtService.verify(token);
-    } catch (error) {
+      return this.jwtService.verify(token) as Record<string, unknown>;
+    } catch {
       throw new UnauthorizedException('Token inválido');
     }
   }
@@ -177,12 +191,13 @@ export class AuthService {
   }
 
   async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
-    let payload: any;
+    let payload: JwtTokenPayload;
     try {
       payload = this.jwtService.verify(dto.token);
-    } catch {
+    } catch (err) {
       throw new BadRequestException(
         'El enlace de restablecimiento es inválido o ya expiró. Solicita uno nuevo.',
+        { cause: err },
       );
     }
 
@@ -191,7 +206,7 @@ export class AuthService {
     }
 
     const user = await this.usersService.findByEmail(payload.email);
-    if (!user || !user.isActive) {
+    if (!user?.isActive) {
       throw new BadRequestException('No se puede restablecer la contraseña de este usuario.');
     }
 
@@ -202,12 +217,13 @@ export class AuthService {
   }
 
   async verifyEmail(dto: VerifyEmailDto): Promise<{ message: string }> {
-    let payload: any;
+    let payload: JwtTokenPayload;
     try {
       payload = this.jwtService.verify(dto.token);
-    } catch {
+    } catch (err) {
       throw new BadRequestException(
         'El enlace de verificación es inválido o ya expiró. Inicia sesión para solicitar uno nuevo.',
+        { cause: err },
       );
     }
 
