@@ -383,6 +383,61 @@ describe('ReportsService', () => {
       expect(result.data).toHaveLength(0);
       expect(result.isSemanticSearch).toBe(true);
     });
+
+    it('should fall back to text search when generateEmbedding returns empty', async () => {
+      reportRepo.findAll.mockResolvedValue([makeReport({ embedding: [0.1, 0.2, 0.3] })]);
+      embeddingService.generateEmbedding.mockResolvedValue([]);
+
+      const result = await service.search('perro', 1, 10);
+
+      expect(result.isSemanticSearch).toBe(false);
+    });
+
+    it('should fall back to text search when all scores are below threshold', async () => {
+      reportRepo.findAll.mockResolvedValue([makeReport({ embedding: [0.1, 0.2, 0.3] })]);
+      embeddingService.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
+      embeddingService.cosineSimilarity.mockReturnValue(0.1); // below MIN_SEMANTIC_SCORE (0.3)
+
+      const result = await service.search('perro', 1, 10);
+
+      expect(result.isSemanticSearch).toBe(false);
+    });
+
+    it('should filter out reports without embeddings', async () => {
+      const withEmbedding = makeReport({ embedding: [0.1, 0.2, 0.3] });
+      const withoutEmbedding = makeReport({ embedding: [] });
+      reportRepo.findAll.mockResolvedValue([withEmbedding, withoutEmbedding]);
+      embeddingService.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
+      embeddingService.cosineSimilarity.mockReturnValue(0.9);
+
+      const result = await service.search('perro', 1, 10);
+
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('should apply combined geo+semantic score when coordinates provided', async () => {
+      const report = makeReport({ embedding: [0.1, 0.2, 0.3] });
+      reportRepo.findAll.mockResolvedValue([report]);
+      embeddingService.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
+      embeddingService.cosineSimilarity.mockReturnValue(0.9);
+      embeddingService.calculateDistanceKm.mockReturnValue(1.5);
+
+      const result = await service.search('perro', 1, 10, { lat: 5.53, lon: -73.36, radiusKm: 10 });
+
+      expect(result.isSemanticSearch).toBe(true);
+      expect(result.data.length).toBeGreaterThan(0);
+    });
+
+    it('should exclude reports without lat/lon from geo-filtered search', async () => {
+      // makeReport always sets lat/lon; simulate a report outside radius via calculateDistanceKm
+      const report = makeReport({ embedding: [0.1, 0.2, 0.3] });
+      reportRepo.findAll.mockResolvedValue([report]);
+      embeddingService.calculateDistanceKm.mockReturnValue(999); // far outside radius
+
+      const result = await service.search('perro', 1, 10, { lat: 5.53, lon: -73.36, radiusKm: 1 });
+
+      expect(result.data).toHaveLength(0);
+    });
   });
 
   describe('generateReportSummary', () => {
