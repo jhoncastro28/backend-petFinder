@@ -48,6 +48,7 @@ export class ReportsService {
       breed: dto.breed,
       size: dto.size,
       description: dto.description,
+      type: dto.type,
     });
     const embedding = await this.embeddingService.generateEmbedding(embeddingText);
 
@@ -198,35 +199,49 @@ export class ReportsService {
       return this.emptyPaginatedResult(page, limit, true);
     }
 
-    // 3. Generar embedding de la consulta
-    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+    // 3. Normalizar la query y generar su embedding
+    const processedQuery = this.embeddingService.preprocessQuery(query);
+    const queryEmbedding = await this.embeddingService.generateEmbedding(processedQuery);
 
     if (!queryEmbedding.length) {
       // Si falla la generación del embedding, hacer fallback a texto
       return this.textSearchFallback(query, page, limit, { species, type, size });
     }
 
-    // 4. Calcular score combinado para cada reporte
-    const scored: ReportWithScore[] = geoFiltered.map((report) => {
-      const semanticScore = report.embedding?.length
-        ? this.embeddingService.cosineSimilarity(queryEmbedding, report.embedding)
-        : 0;
+    // 4. Calcular score combinado para cada reporte, excluyendo los irrelevantes
+    const MIN_SEMANTIC_SCORE = 0.3;
 
-      let combinedScore = semanticScore;
-      let distanceKm: number | undefined;
+    const scored: ReportWithScore[] = geoFiltered
+      .filter((report) => report.embedding?.length > 0)
+      .map((report) => {
+        const semanticScore = this.embeddingService.cosineSimilarity(
+          queryEmbedding,
+          report.embedding,
+        );
 
-      if (hasGeo && report.lat && report.lon) {
-        distanceKm = this.embeddingService.calculateDistanceKm(lat, lon, report.lat, report.lon);
-        const geoScore = Math.max(0, 1 - distanceKm / radiusKm);
-        // 70% semántico + 30% geográfico
-        combinedScore = 0.7 * semanticScore + 0.3 * geoScore;
-      }
+        if (semanticScore < MIN_SEMANTIC_SCORE) return null;
 
-      return Object.assign(report, {
-        similarityScore: Math.round(combinedScore * 100) / 100,
-        distanceKm,
-      }) as ReportWithScore;
-    });
+        let combinedScore = semanticScore;
+        let distanceKm: number | undefined;
+
+        if (hasGeo && report.lat && report.lon) {
+          distanceKm = this.embeddingService.calculateDistanceKm(lat, lon, report.lat, report.lon);
+          const geoScore = Math.max(0, 1 - distanceKm / radiusKm);
+          // 70% semántico + 30% geográfico
+          combinedScore = 0.7 * semanticScore + 0.3 * geoScore;
+        }
+
+        return Object.assign(report, {
+          similarityScore: Math.round(combinedScore * 100) / 100,
+          distanceKm,
+        }) as ReportWithScore;
+      })
+      .filter((r): r is ReportWithScore => r !== null);
+
+    // Si ningún reporte pasó el umbral semántico, hacer fallback a texto
+    if (scored.length === 0) {
+      return this.textSearchFallback(query, page, limit, { species, type, size, color, breed });
+    }
 
     // 5. Ordenar por score descendente
     scored.sort((a, b) => b.similarityScore - a.similarityScore);
@@ -277,6 +292,7 @@ export class ReportsService {
           breed: report.breed,
           size: report.size,
           description: report.description,
+          type: report.type,
         });
 
         const embedding = await this.embeddingService.generateEmbedding(text);
@@ -370,6 +386,7 @@ export class ReportsService {
             breed: source.breed,
             size: source.size,
             description: source.description,
+            type: source.type,
           }),
         );
 
@@ -391,6 +408,7 @@ export class ReportsService {
               breed: source.breed,
               size: source.size,
               description: source.description,
+              type: source.type,
             }),
             this.embeddingService.buildReportText({
               species: candidate.species,
@@ -398,6 +416,7 @@ export class ReportsService {
               breed: candidate.breed,
               size: candidate.size,
               description: candidate.description,
+              type: candidate.type,
             }),
           );
         }
@@ -513,6 +532,7 @@ export class ReportsService {
         breed: report.breed,
         size: report.size,
         description: report.description,
+        type: report.type,
       });
       const newEmbedding = await this.embeddingService.generateEmbedding(embeddingText);
 
