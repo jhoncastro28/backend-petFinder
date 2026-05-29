@@ -25,7 +25,7 @@ export class EmbeddingService {
     if (!this.genAI) return [];
 
     try {
-      const model = this.genAI.getGenerativeModel({ model: 'text-embedding-004' });
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-embedding-001' });
       const result = await model.embedContent(text.trim());
       return result.embedding.values;
     } catch (error) {
