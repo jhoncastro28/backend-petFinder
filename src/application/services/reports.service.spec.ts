@@ -57,6 +57,7 @@ const mockEmbeddingService = () => ({
   isAvailable: jest.fn().mockReturnValue(true),
   generateEmbedding: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]),
   buildReportText: jest.fn().mockReturnValue('perro marrón labrador'),
+  preprocessQuery: jest.fn().mockImplementation((q: string) => q),
   cosineSimilarity: jest.fn().mockReturnValue(0.85),
   calculateDistanceKm: jest.fn().mockReturnValue(2.5),
   generateSocialSummary: jest.fn().mockResolvedValue('Se reporta perro perdido.'),
